@@ -40,11 +40,11 @@ void Mesh::load(string filename) {
 		throw runtime_error(ss.str());
 	}
 
-	// Store vertex and normal data while reading
-	vector<vec3> raw_vertices;
-	vector<vec3> raw_normals;
-	vector<unsigned int> v_elements;
-	vector<unsigned int> n_elements;
+	// // Store vertex and normal data while reading
+	// vector<vec3> raw_vertices;
+	// vector<vec3> raw_normals;
+	// vector<unsigned int> v_elements;
+	// vector<unsigned int> n_elements;
 
 	string line;
 	while (getline(file, line)) {

@@ -25,6 +25,13 @@ public:
 		glm::vec3 norm;		// Normal
 	};
 
+	// Store vertex and normal data while reading
+	std::vector<glm::vec3> raw_vertices;
+	std::vector<glm::vec3> raw_normals;
+	std::vector<unsigned int> v_elements;
+	std::vector<unsigned int> n_elements;
+
+
 protected:
 	void release();		// Release OpenGL resources
 
