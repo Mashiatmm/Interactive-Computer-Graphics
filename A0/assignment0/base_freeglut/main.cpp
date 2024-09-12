@@ -94,7 +94,7 @@ void initState() {
 
 	// ADDED BY MASHIAT
 	velocity = vec3(0.3, 0.3, 0);
-	debug = true;
+	debug = false;
 
 }
 
@@ -110,7 +110,8 @@ void initGLUT(int* argc, char** argv) {
 	glutCreateWindow("FreeGlut Window");
 
 	// Create a menu
-	glutCreateMenu(menu);
+	GLuint submenu =  glutCreateMenu(menu);
+	std::cout << submenu << std::endl;
 	glutAddMenuEntry("Toggle view mode", MENU_VIEWMODE);
 	glutAddMenuEntry("Exit", MENU_EXIT);
 	glutAttachMenu(GLUT_RIGHT_BUTTON);
@@ -127,7 +128,7 @@ void initGLUT(int* argc, char** argv) {
 
 void initOpenGL() {
 	// Set clear color and depth
-	glClearColor(0.0f, 0.1f, 0.1f, 1.0f);
+	glClearColor(0.0f, 1.f, 0.0f, 1.0f);
 	glClearDepth(1.0f);
 	// Enable depth testing
 	glEnable(GL_DEPTH_TEST);
