@@ -28,8 +28,9 @@ vec2 camOrigin;			// Original camera coordinates upon clicking
 vec2 mouseOrigin;		// Original mouse coordinates upon clicking
 
 // ADDED BY MASHIAT
-vec3 velocity;
-pair<vec3, vec3> meshBB;
+const int gridSize = 64;
+vector<GLfloat> points;
+int pointCount;
 bool debug;
 
 // Constants
@@ -43,7 +44,7 @@ void initState();
 void initGLUT(int* argc, char** argv);
 void initOpenGL();
 void initTriangle();
-void initObj();
+void initPoints();
 
 // Callback functions
 void display();
@@ -61,9 +62,8 @@ int main(int argc, char** argv) {
 		initState();
 		initGLUT(&argc, argv);
 		initOpenGL();
-		initTriangle();
-		initObj();
-
+		// initTriangle();
+		initPoints();
 	} catch (const exception& e) {
 		// Handle any errors
 		cerr << "Fatal error: " << e.what() << endl;
@@ -93,14 +93,15 @@ void initState() {
 	camRot = false;
 
 	// ADDED BY MASHIAT
-	velocity = vec3(0.3, 0.3, 0);
 	debug = false;
+	pointCount = 0;
 
 }
 
 void initGLUT(int* argc, char** argv) {
 	// Set window and context settings
-	width = 800; height = 600;
+	width = 640; 
+	height = width;
 	glutInit(argc, argv);
 	glutInitWindowSize(width, height);
 	glutInitContextVersion(3, 3);
@@ -111,7 +112,6 @@ void initGLUT(int* argc, char** argv) {
 
 	// Create a menu
 	GLuint submenu =  glutCreateMenu(menu);
-	std::cout << submenu << std::endl;
 	glutAddMenuEntry("Toggle view mode", MENU_VIEWMODE);
 	glutAddMenuEntry("Exit", MENU_EXIT);
 	glutAttachMenu(GLUT_RIGHT_BUTTON);
@@ -128,7 +128,7 @@ void initGLUT(int* argc, char** argv) {
 
 void initOpenGL() {
 	// Set clear color and depth
-	glClearColor(0.0f, 1.f, 0.0f, 1.0f);
+	glClearColor(0.0f, 0.f, 0.0f, 1.0f);
 	glClearDepth(1.0f);
 	// Enable depth testing
 	glEnable(GL_DEPTH_TEST);
@@ -181,13 +181,57 @@ void initTriangle() {
 
 }
 
-void initObj() {
-	if (!mesh) mesh = new Mesh("models/triangle.obj");
+void initPoints()
+{
+	// Generate the points for a 64x64 grid
+	for (int i = 0; i < gridSize; ++i) {
+		for (int j = 0; j < gridSize; ++j) {
+			// Normalize the grid coordinates to be between -1.0 and 1.0
+			GLfloat x = (2.0f * i) / (gridSize - 1) - 1.0f;  // x goes from -1.0 to 1.0
+			GLfloat y = (2.0f * j) / (gridSize - 1) - 1.0f;  // y goes from -1.0 to 1.0
+			points.push_back(x);
+			points.push_back(y);
+			points.push_back(0.0f);  // z is 0 for a flat grid
 
-	// Scale and center mesh using bounding box
-	meshBB = mesh->boundingBox();	
+			// color
+			// Assign a random color (RGB)
+			points.push_back(static_cast<float>(rand()) / RAND_MAX);  // R
+			points.push_back(static_cast<float>(rand()) / RAND_MAX);  // G
+			points.push_back(static_cast<float>(rand()) / RAND_MAX);  // B
+	
+		}
+	}
+
+	pointCount = gridSize * gridSize;
+
+	glGenBuffers(1, &vbuf);
+	glGenVertexArrays(1, &vao);
+
+	// Bind the VAO (Vertex Array Object)
+	glBindVertexArray(vao);
+
+	// Bind the VBO (Vertex Buffer Object) and upload the point data
+	glBindBuffer(GL_ARRAY_BUFFER, vbuf);
+	glBufferData(GL_ARRAY_BUFFER, points.size() * sizeof(GLfloat), points.data(), GL_STATIC_DRAW);
+
+	// Define the vertex attribute (position) layout
+	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(GLfloat), (void*)0);
+	glEnableVertexAttribArray(0);
+
+	// Enable the color attribute (location = 1)
+	glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(GLfloat), (void*)(3 * sizeof(GLfloat)));  // Color attribute
+	glEnableVertexAttribArray(1);
+	// glPointSize(1.0f * width / gridSize);
+	glPointSize(10.0f);
+
+
+	// Unbind the VAO
+	glBindVertexArray(0);
+
+
 
 }
+
 
 void display() {
 	try {
@@ -207,51 +251,44 @@ void display() {
 		rot = rotate(rot, radians(camCoords.x), vec3(0.0, 1.0, 0.0));
 		xform = proj * view * rot;
 
+		glBindVertexArray(vao);
+
+
+
+		// Send the transformation matrix to the shader
+		glUniformMatrix4fv(uniXform, 1, GL_FALSE, glm::value_ptr(xform));
+
+		// Draw points
+		glDrawArrays(GL_POINTS, 0, pointCount);  // We have 3 points
+
+		// Unbind the VAO
+		glBindVertexArray(0);
+
 		switch (viewmode) {
 		case VIEWMODE_TRIANGLE:
-			glBindVertexArray(vao);
-			// Send transformation matrix to shader
-			glUniformMatrix4fv(uniXform, 1, GL_FALSE, value_ptr(xform));
-			// Draw the triangle
-			glDrawArrays(GL_TRIANGLES, 0, vcount);
-			glBindVertexArray(0);
+			// glBindVertexArray(vao);
+			// // Send transformation matrix to shader
+			// glUniformMatrix4fv(uniXform, 1, GL_FALSE, value_ptr(xform));
+			// // Draw the triangle
+			// glDrawArrays(GL_TRIANGLES, 0, vcount);
+			// glBindVertexArray(0);
 			break;
 
 		case VIEWMODE_OBJ: {
 			// Load model on demand
 			// if (!mesh) mesh = new Mesh("models/cube.obj");
 
-			// Scale and center mesh using bounding box
+			// // Scale and center mesh using bounding box
 			// pair<vec3, vec3> meshBB = mesh->boundingBox();
-			mat4 fixBB = scale(mat4(1.0f), vec3(1.0f / length(meshBB.second - meshBB.first)));
-			fixBB = glm::translate(fixBB, -(meshBB.first + meshBB.second) / 2.0f);
-			// Concatenate all transformations and upload to shader
-			xform = xform * fixBB;
-			glUniformMatrix4fv(uniXform, 1, GL_FALSE, value_ptr(xform));
+			// mat4 fixBB = scale(mat4(1.0f), vec3(1.0f / length(meshBB.second - meshBB.first)));
+			// fixBB = glm::translate(fixBB, -(meshBB.first + meshBB.second) / 2.0f);
+			// // Concatenate all transformations and upload to shader
+			// xform = xform * fixBB;
+			// glUniformMatrix4fv(uniXform, 1, GL_FALSE, value_ptr(xform));
 			
-
-			if (debug == true){
-				for(int i = 0 ; i < 4; i++ ){
-					std::cout << xform[i].x << ", " << xform[i].y << ", " << xform[i].z << ", " << xform[i].w << std::endl;
-			 	}
-			}
-
-			vec4 clipSpacePos = xform * xform[3];
-			if( debug == true ){
-				std::cout << clipSpacePos.x << ", " << clipSpacePos.y << ", " << clipSpacePos.z << ", " << clipSpacePos.w << std::endl;
-				std::cout << "vao:.........." << std::endl;
-				std::cout << vao << std::endl;
-				std::cout << "..................." << std::endl;
-
-			}
-			vec3 ndcPos = vec3(clipSpacePos) / clipSpacePos.w;
-
-			if(ndcPos.x > 1 || ndcPos.x < -1 ) { velocity[0] = velocity[0] * -1; }
-			if(ndcPos.y > 1 || ndcPos.y < -1 ) { velocity[1] = velocity[1] * -1; }
-
 			
-			// Draw the mesh
-			mesh->draw();
+			// // Draw the mesh
+			// mesh->draw();
 			break; }
 		}
 		assert(glGetError() == GL_NO_ERROR);
@@ -324,12 +361,7 @@ void mouseMove(int x, int y) {
 }
 
 void idle() {
-	// add velocity to the bounding box coordinates of the object
-	meshBB.first += velocity;
-	meshBB.second += velocity;
-
-
-
+	
 }
 
 void menu(int cmd) {
