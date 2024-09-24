@@ -5,6 +5,10 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include "gl_core_3_3.h"
 #include <GL/freeglut.h>
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
+// #define STB_IMAGE_WRITE_IMPLEMENTATION
+// #include "stb_image_write.h"
 #include "util.hpp"
 #include "mesh.hpp"
 using namespace std;
@@ -19,6 +23,8 @@ GLuint vao;				// Vertex array object
 GLuint vbuf;			// Vertex buffer
 GLsizei vcount;			// Number of vertices
 Mesh* mesh;				// Mesh loaded from .obj file
+GLint uRenderDiscLoc;
+GLint uSigma;
 
 
 // Camera state
@@ -30,14 +36,18 @@ vec2 mouseOrigin;		// Original mouse coordinates upon clicking
 // ADDED BY MASHIAT
 const int gridSize = 64;
 vector<GLfloat> points;
+vector<GLfloat> colors;
 int pointCount;
+int imageWidth, imageHeight;
+int channels;
 bool debug;
 
 // Constants
 const int MENU_VIEWMODE = 0;		// Toggle view mode
 const int MENU_EXIT = 1;			// Exit application
-const int VIEWMODE_TRIANGLE = 0;	// View triangle
-const int VIEWMODE_OBJ = 1;			// View obj-loaded mesh
+const int VIEWMODE_SQUARE = 0;	// View triangle
+const int VIEWMODE_DISC = 1;			// View obj-loaded mesh
+const int VIEWMODE_GAUSS = 2;
 
 // Initialization functions
 void initState();
@@ -45,6 +55,7 @@ void initGLUT(int* argc, char** argv);
 void initOpenGL();
 void initTriangle();
 void initPoints();
+unsigned char* initImage();
 
 // Callback functions
 void display();
@@ -55,6 +66,8 @@ void mouseMove(int x, int y);
 void idle();
 void menu(int cmd);
 void cleanup();
+
+
 
 int main(int argc, char** argv) {
 	try {
@@ -81,13 +94,15 @@ void initState() {
 	// Initialize global state
 	width = 0;
 	height = 0;
-	viewmode = VIEWMODE_OBJ;
+	viewmode = VIEWMODE_SQUARE;
 	shader = 0;
 	uniXform = 0;
 	vao = 0;
 	vbuf = 0;
 	vcount = 0;
 	mesh = NULL;
+	uRenderDiscLoc = 0;
+	uSigma = 0;
 
 	camCoords = vec3(0.0, 0.0, 10.0);
 	camRot = false;
@@ -144,6 +159,9 @@ void initOpenGL() {
 	shaders.clear();
 	// Locate uniforms
 	uniXform = glGetUniformLocation(shader, "xform");
+	uRenderDiscLoc = glGetUniformLocation(shader, "uRenderDisc");
+
+	uSigma = glGetUniformLocation(shader, "sigma");
 	assert(glGetError() == GL_NO_ERROR);
 }
 
@@ -183,7 +201,70 @@ void initTriangle() {
 
 void initPoints()
 {
-	// Generate the points for a 64x64 grid
+	unsigned char* imageData = initImage();
+
+	// Save the image as JPG
+	// stbi_write_jpg("output_image.jpg", imageWidth, imageHeight, channels, imageData, 100); // Quality set to 100
+
+	int imageWidthPerPoint = imageWidth / gridSize;
+	int imageHeightPerPoint = imageHeight / gridSize;
+
+	// if(debug == false){
+	// 	std::cout << imageWidthPerPoint << ", " << imageHeightPerPoint << std::endl;
+	// }
+
+	if(channels < 3 && channels > 4){
+		std::cout << "Channels: " << channels << std::endl;
+		std::cout << "Code does not work for channels less than three";
+		exit(1);
+	}
+
+	for(int i = 0 ; i < imageWidth ; i = i + imageWidthPerPoint){
+		for(int j = 0 ; j < imageHeight; j = j + imageHeightPerPoint){
+ 			
+			float avgColor[4] = {0, 0, 0, 0};
+			int count = 0;
+
+			for(int l = j; l < j + imageHeightPerPoint && l < imageHeight; l = l + 1 ){
+				for(int k = i ; k < i + imageWidthPerPoint && k < imageWidth; k = k + 1 ){
+					// Calculate the index for the current pixel
+					int actualRow = imageHeight - 1 - l;  // Invert Y-axis
+					int index = (actualRow * imageWidth + k) * channels;
+					// Accumulate the pixel's color channels
+					avgColor[0] += imageData[index];       // Red
+					avgColor[1] += imageData[index + 1];   // Green
+					avgColor[2] += imageData[index + 2];   // Blue
+					if(channels == 4){
+						avgColor[3] += imageData[index + 3];
+					}
+
+					++count;
+				
+				}	
+				
+			}
+
+			// Calculate the average color
+			if (count > 0) {
+				
+				colors.push_back(avgColor[0] * 1.0 / count);
+				colors.push_back(avgColor[1] * 1.0 / count);
+				colors.push_back(avgColor[2] * 1.0 / count);
+				if(channels == 3){
+					colors.push_back(255);
+				}
+				else{
+					colors.push_back(avgColor[3] * 1.0 / count);
+
+				}
+
+				
+        	}
+		}
+	}
+	
+	// Generate the p oints for a 64x64 grid
+	int colorIndex = 0;
 	for (int i = 0; i < gridSize; ++i) {
 		for (int j = 0; j < gridSize; ++j) {
 			// Normalize the grid coordinates to be between -1.0 and 1.0
@@ -194,15 +275,23 @@ void initPoints()
 			points.push_back(0.0f);  // z is 0 for a flat grid
 
 			// color
-			// Assign a random color (RGB)
-			points.push_back(static_cast<float>(rand()) / RAND_MAX);  // R
-			points.push_back(static_cast<float>(rand()) / RAND_MAX);  // G
-			points.push_back(static_cast<float>(rand()) / RAND_MAX);  // B
-	
+			
+			points.push_back(colors[colorIndex++] / 255.0);  // R
+			points.push_back(colors[colorIndex++] / 255.0);  // G
+			points.push_back(colors[colorIndex++] / 255.0);  // B
+			points.push_back(colors[colorIndex++] / 255.0);
+			// points.push_back(imageData[colorIndex++] / 255.0);  // R
+			// points.push_back(imageData[colorIndex++] / 255.0);  // G
+			// points.push_back(imageData[colorIndex++] / 255.0);  // B
 		}
 	}
 
 	pointCount = gridSize * gridSize;
+	stbi_image_free(imageData);
+
+	// Enable blending for transparency
+	glEnable(GL_BLEND);
+	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
 	glGenBuffers(1, &vbuf);
 	glGenVertexArrays(1, &vao);
@@ -215,22 +304,50 @@ void initPoints()
 	glBufferData(GL_ARRAY_BUFFER, points.size() * sizeof(GLfloat), points.data(), GL_STATIC_DRAW);
 
 	// Define the vertex attribute (position) layout
-	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(GLfloat), (void*)0);
+	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 7 * sizeof(GLfloat), (void*)0);
 	glEnableVertexAttribArray(0);
-
 	// Enable the color attribute (location = 1)
-	glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(GLfloat), (void*)(3 * sizeof(GLfloat)));  // Color attribute
+	glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, 7 * sizeof(GLfloat), (void*)(3 * sizeof(GLfloat)));  // Color attribute
 	glEnableVertexAttribArray(1);
 	// glPointSize(1.0f * width / gridSize);
-	glPointSize(10.0f);
-
+	glPointSize(20.0f);
 
 	// Unbind the VAO
 	glBindVertexArray(0);
 
+	
 
 
 }
+
+
+
+unsigned char* initImage()
+{
+	unsigned char* imageData = stbi_load("download.jpg", &imageWidth, &imageHeight, &channels, 0);
+
+
+	if (!imageData) {
+		std::cerr << "Failed to load image!" << std::endl;
+		return 0;
+	}
+   
+
+	return imageData;
+	// get image width and height, divide by pointGrid size to find out how many pixels of the image should form a point color
+	// int width, height;
+	// unsigned char* imageData = SOIL_load_image("download_64x64.jpg", &imageWidth, &imageHeight, 0, SOIL_LOAD_RGB);
+
+	// if (imageData) {
+	// 	// Use the image data
+	// 	SOIL_free_image_data(imageData);
+	// } else {
+	// 	std::cerr << "Image loading failed!" << std::endl;
+	// }
+	// return imageData;
+}
+
+
 
 
 void display() {
@@ -253,28 +370,33 @@ void display() {
 
 		glBindVertexArray(vao);
 
-
-
 		// Send the transformation matrix to the shader
 		glUniformMatrix4fv(uniXform, 1, GL_FALSE, glm::value_ptr(xform));
+		glUniform1f(uSigma, 0.8f);
 
-		// Draw points
-		glDrawArrays(GL_POINTS, 0, pointCount);  // We have 3 points
 
-		// Unbind the VAO
-		glBindVertexArray(0);
 
 		switch (viewmode) {
-		case VIEWMODE_TRIANGLE:
+		case VIEWMODE_SQUARE:
 			// glBindVertexArray(vao);
 			// // Send transformation matrix to shader
 			// glUniformMatrix4fv(uniXform, 1, GL_FALSE, value_ptr(xform));
 			// // Draw the triangle
 			// glDrawArrays(GL_TRIANGLES, 0, vcount);
 			// glBindVertexArray(0);
+			glUniform1i(uRenderDiscLoc, 0);  // Enable disc rendering
+			break;
+		case VIEWMODE_GAUSS:
+			// glBindVertexArray(vao);
+			// // Send transformation matrix to shader
+			// glUniformMatrix4fv(uniXform, 1, GL_FALSE, value_ptr(xform));
+			// // Draw the triangle
+			// glDrawArrays(GL_TRIANGLES, 0, vcount);
+			// glBindVertexArray(0);
+			glUniform1i(uRenderDiscLoc, 2);
 			break;
 
-		case VIEWMODE_OBJ: {
+		case VIEWMODE_DISC: {
 			// Load model on demand
 			// if (!mesh) mesh = new Mesh("models/cube.obj");
 
@@ -285,12 +407,21 @@ void display() {
 			// // Concatenate all transformations and upload to shader
 			// xform = xform * fixBB;
 			// glUniformMatrix4fv(uniXform, 1, GL_FALSE, value_ptr(xform));
-			
+			glUniform1i(uRenderDiscLoc, 1);  // Enable disc rendering
+
 			
 			// // Draw the mesh
 			// mesh->draw();
 			break; }
 		}
+
+		
+		// Draw points
+		glDrawArrays(GL_POINTS, 0, pointCount);  
+
+		// Unbind the VAO
+		glBindVertexArray(0);
+
 		assert(glGetError() == GL_NO_ERROR);
 
 		// Revert context state
@@ -367,7 +498,7 @@ void idle() {
 void menu(int cmd) {
 	switch (cmd) {
 	case MENU_VIEWMODE:
-		viewmode = (viewmode + 1) % 2;
+		viewmode = (viewmode + 1) % 3;
 		glutPostRedisplay();	// Tell GLUT to redraw the screen
 		break;
 
@@ -381,6 +512,7 @@ void cleanup() {
 	// Release all resources
 	if (shader) { glDeleteProgram(shader); shader = 0; }
 	uniXform = 0;
+	uRenderDiscLoc = 0;
 	if (vao) { glDeleteVertexArrays(1, &vao); vao = 0; }
 	if (vbuf) { glDeleteBuffers(1, &vbuf); vbuf = 0; }
 	vcount = 0;

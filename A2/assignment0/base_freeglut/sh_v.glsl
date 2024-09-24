@@ -1,9 +1,9 @@
 #version 330
 
 layout(location = 0) in vec3 pos;		// Model-space position
-layout(location = 1) in vec3 norm;		// Model-space normal
+layout(location = 1) in vec4 norm;		// Model-space normal
 
-smooth out vec3 fragNorm;	// Model-space interpolated normal
+smooth out vec4 fragNorm;	// Model-space interpolated normal
 
 uniform mat4 xform;			// Model-to-clip space transform
 
