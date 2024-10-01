@@ -27,7 +27,7 @@ GLsizei vcount;			// Number of vertices
 GLint uRenderDiscLoc;
 GLint uSigma;
 GLint alpha;
-GLfloat imgRange;
+vec2 imgRange;
 
 
 // Camera state
@@ -111,7 +111,7 @@ void initState() {
 	uRenderDiscLoc = 0;
 	uSigma = 0;
 	alpha = 0.1;
-	imgRange = 32.0f;
+	imgRange = vec2(32.0f, 32.0f);
 
 	camCoords = vec3(0.0, 0.0, 70.0);
 	camRot = false;
@@ -209,6 +209,13 @@ void initTriangle() {
 	assert(glGetError() == GL_NO_ERROR);
 
 }
+vec2 determineGridSize()
+{
+	std::cout << "image width and height: " << imageWidth << ", " << imageHeight << std::endl;
+	if(imageWidth == imageHeight) return vec2(gridSize, gridSize);
+	if(imageWidth > imageHeight) return vec2(gridSize, ceil(1.0 * imageHeight * gridSize / imageWidth));
+	return vec2(ceil(1.0 * imageWidth * gridSize / imageHeight), gridSize);
+}
 
 void initPoints()
 {
@@ -216,13 +223,16 @@ void initPoints()
 
 	// Save the image as JPG
 	// stbi_write_jpg("output_image.jpg", imageWidth, imageHeight, channels, imageData, 100); // Quality set to 100
+	vec2 grid = determineGridSize();
+	
+	int imageWidthPerPoint = imageWidth / grid.y;
+	int imageHeightPerPoint = imageHeight / grid.x;
 
-	int imageWidthPerPoint = imageWidth / gridSize;
-	int imageHeightPerPoint = imageHeight / gridSize;
+	std::cout << "per point width and height: " << imageWidthPerPoint << ", " << imageHeightPerPoint << std::endl; 
 
-	// if(debug == false){
-	// 	std::cout << imageWidthPerPoint << ", " << imageHeightPerPoint << std::endl;
-	// }
+	if(debug == false){
+		std::cout << "Grid size: " << grid.x << ", " << grid.y << std::endl;
+	}
 
 	if(channels < 3 && channels > 4){
 		std::cout << "Channels: " << channels << std::endl;
@@ -231,17 +241,21 @@ void initPoints()
 	}
 	std::cout << "Number of channels: " << channels << std::endl;
 
-	for(int i = 0 ; i < imageWidth ; i = i + imageWidthPerPoint){
-		for(int j = 0 ; j < imageHeight; j = j + imageHeightPerPoint){
+	for(int i = 0 ; (i < imageWidth) && ( (i/imageWidthPerPoint) < grid.x); i = i + imageWidthPerPoint){
+		for(int j = 0 ; (j < imageHeight) && ((j/imageHeightPerPoint) < grid.y); j = j + imageHeightPerPoint){
  			
 			float avgColor[4] = {0, 0, 0, 0};
 			int count = 0;
-
+			// std::cout << std::endl;
 			for(int l = j; l < j + imageHeightPerPoint && l < imageHeight; l = l + 1 ){
 				for(int k = i ; k < i + imageWidthPerPoint && k < imageWidth; k = k + 1 ){
 					// Calculate the index for the current pixel
 					int actualRow = imageHeight - 1 - l;  // Invert Y-axis
 					int index = (actualRow * imageWidth + k) * channels;
+
+					// int actualCol = imageWidth - 1 - k;
+					// int index = ( actualCol * imageHeight + l) * channels;
+					// std::cout << index << std::endl;
 					// Accumulate the pixel's color channels
 					avgColor[0] += imageData[index];       // Red
 					avgColor[1] += imageData[index + 1];   // Green
@@ -274,14 +288,15 @@ void initPoints()
         	}
 		}
 	}
-	
+	if(grid.x > grid.y) imgRange.y = int( grid.y * imgRange.x / grid.x );
+	else if(grid.y > grid.x) imgRange.x = int( grid.x * imgRange.y / grid.y );
 	// Generate the p oints for a 64x64 grid
 	int colorIndex = 0;
-	for (int i = 0; i < gridSize; ++i) {
-		for (int j = 0; j < gridSize; ++j) {
+	for (int i = 0; i < grid.x; ++i) {
+		for (int j = 0; j < grid.y; ++j) {
 			// Normalize the grid coordinates to be between -1.0 and 1.0
-			GLfloat x = (2.0f * imgRange * i) / (gridSize - 1) - imgRange;  // x goes from -1.0 to 1.0
-			GLfloat y = (2.0f * imgRange * j) / (gridSize - 1) - imgRange;  // y goes from -1.0 to 1.0
+			GLfloat x = (2.0f * imgRange.x * i) / (grid.x - 1) - imgRange.x;  // x goes from -1.0 to 1.0
+			GLfloat y = (2.0f * imgRange.y * j) / (grid.y - 1) - imgRange.y;  // y goes from -1.0 to 1.0
 			points.push_back(x);
 			points.push_back(y);
 			points.push_back(pointsZ);  // z is 0 for a flat grid
@@ -298,7 +313,7 @@ void initPoints()
 		}
 	}
 
-	pointCount = gridSize * gridSize;
+	pointCount = grid.x * grid.y;
 	stbi_image_free(imageData);
 
 	// Enable blending for transparency
@@ -333,7 +348,7 @@ void initPoints()
 
 unsigned char* initImage()
 {
-	unsigned char* imageData = stbi_load("download.png", &imageWidth, &imageHeight, &channels, 0);
+	unsigned char* imageData = stbi_load("imageB.png", &imageWidth, &imageHeight, &channels, 0);
 
 
 	if (!imageData) {
