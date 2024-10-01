@@ -5,12 +5,13 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include "gl_core_3_3.h"
 #include <GL/freeglut.h>
+#include <cmath>
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
 // #define STB_IMAGE_WRITE_IMPLEMENTATION
 // #include "stb_image_write.h"
 #include "util.hpp"
-#include "mesh.hpp"
+// #include "mesh.hpp"
 using namespace std;
 using namespace glm;
 
@@ -22,9 +23,11 @@ GLuint uniXform;		// Shader location of xform mtx
 GLuint vao;				// Vertex array object
 GLuint vbuf;			// Vertex buffer
 GLsizei vcount;			// Number of vertices
-Mesh* mesh;				// Mesh loaded from .obj file
+// Mesh* mesh;				// Mesh loaded from .obj file
 GLint uRenderDiscLoc;
 GLint uSigma;
+GLint alpha;
+GLfloat imgRange;
 
 
 // Camera state
@@ -41,12 +44,14 @@ int pointCount;
 int imageWidth, imageHeight;
 int channels;
 bool debug;
+float fovAngle = 45.0f;
+float pointsZ = 0.0f;
 
 // Constants
 const int MENU_VIEWMODE = 0;		// Toggle view mode
 const int MENU_EXIT = 1;			// Exit application
-const int VIEWMODE_SQUARE = 0;	// View triangle
-const int VIEWMODE_DISC = 1;			// View obj-loaded mesh
+const int VIEWMODE_SQUARE = 0;	
+const int VIEWMODE_DISC = 1;			
 const int VIEWMODE_GAUSS = 2;
 
 // Initialization functions
@@ -61,11 +66,14 @@ unsigned char* initImage();
 void display();
 void reshape(GLint width, GLint height);
 void keyRelease(unsigned char key, int x, int y);
+void keyPressed(int key, int x, int y);
 void mouseBtn(int button, int state, int x, int y);
 void mouseMove(int x, int y);
 void idle();
 void menu(int cmd);
 void cleanup();
+
+void squash(vec2 P);
 
 
 
@@ -100,11 +108,12 @@ void initState() {
 	vao = 0;
 	vbuf = 0;
 	vcount = 0;
-	mesh = NULL;
 	uRenderDiscLoc = 0;
 	uSigma = 0;
+	alpha = 0.1;
+	imgRange = 32.0f;
 
-	camCoords = vec3(0.0, 0.0, 10.0);
+	camCoords = vec3(0.0, 0.0, 70.0);
 	camRot = false;
 
 	// ADDED BY MASHIAT
@@ -139,6 +148,8 @@ void initGLUT(int* argc, char** argv) {
 	glutMotionFunc(mouseMove);
 	glutIdleFunc(idle);
 	glutCloseFunc(cleanup);
+	glutSpecialFunc(keyPressed);
+
 }
 
 void initOpenGL() {
@@ -218,6 +229,7 @@ void initPoints()
 		std::cout << "Code does not work for channels less than three";
 		exit(1);
 	}
+	std::cout << "Number of channels: " << channels << std::endl;
 
 	for(int i = 0 ; i < imageWidth ; i = i + imageWidthPerPoint){
 		for(int j = 0 ; j < imageHeight; j = j + imageHeightPerPoint){
@@ -268,11 +280,11 @@ void initPoints()
 	for (int i = 0; i < gridSize; ++i) {
 		for (int j = 0; j < gridSize; ++j) {
 			// Normalize the grid coordinates to be between -1.0 and 1.0
-			GLfloat x = (2.0f * i) / (gridSize - 1) - 1.0f;  // x goes from -1.0 to 1.0
-			GLfloat y = (2.0f * j) / (gridSize - 1) - 1.0f;  // y goes from -1.0 to 1.0
+			GLfloat x = (2.0f * imgRange * i) / (gridSize - 1) - imgRange;  // x goes from -1.0 to 1.0
+			GLfloat y = (2.0f * imgRange * j) / (gridSize - 1) - imgRange;  // y goes from -1.0 to 1.0
 			points.push_back(x);
 			points.push_back(y);
-			points.push_back(0.0f);  // z is 0 for a flat grid
+			points.push_back(pointsZ);  // z is 0 for a flat grid
 
 			// color
 			
@@ -315,16 +327,13 @@ void initPoints()
 	// Unbind the VAO
 	glBindVertexArray(0);
 
-	
-
-
 }
 
 
 
 unsigned char* initImage()
 {
-	unsigned char* imageData = stbi_load("download.jpg", &imageWidth, &imageHeight, &channels, 0);
+	unsigned char* imageData = stbi_load("download.png", &imageWidth, &imageHeight, &channels, 0);
 
 
 	if (!imageData) {
@@ -347,8 +356,55 @@ unsigned char* initImage()
 	// return imageData;
 }
 
+void squash(vec2 P)
+{
+	P.x = P.x / width;
+	P.y = 1 - ( P.y / height );
+
+	// fov = 45.0f;
+	float yRange = abs( camCoords.z - pointsZ ) * tan(fovAngle * M_PI / 180.0f);
+	float xRange = yRange * (float)width / (float)height;
+
+	vec2 clickedCoord = P * vec2(xRange, yRange) - vec2(xRange / 2.0f, yRange / 2.0f);
+
+	if( debug == true ){
+		// std::cout << P.x << " " << P.y << std::endl;
+		// std::cout << clickedCoord.x << ", " << clickedCoord.y << std::endl;
+	}
+
+	// std::cout << "Squash" << std::endl;
+	// std::cout << "Clicked:" << clickedCoord.x << ", " << clickedCoord.y << std::endl;
+
+	// if(clickedCoord.x > 1 || clickedCoord.x < -1 || clickedCoord.y > 1 || clickedCoord.y < -1){
+	// 	std::cout << "out of bound" << std::endl;
+	// 	return;
+	// }
 
 
+	for( int i = 0 ; i < points.size() ; i += 7 ){
+		// alpha / glm::pow( glm::distance( clickedCoord, vec2(points[i], points[i+1]) ), 2);
+		vec2 tPoint = vec2(points[i], points[i+1]);
+		// std::cout << points[i] << ", " << points[i+1] << std::endl;
+		vec2 result = tPoint - clickedCoord;
+		// std::cout << result.x << ", " << result.y << std::endl;
+		float distance = 0.1 / ( result.x * result.x + result.y * result.y );
+		// std::cout << distance << std::endl;
+		result = tPoint + distance * glm::normalize(result);
+		// std::cout << "Result: " << result.x << ", " << result.y << std::endl;
+		points[i] = result.x;
+		points[i+1] = result.y;
+		// break;
+
+	}
+
+	// // Bind the VBO (Vertex Buffer Object) and upload the point data
+	glBindBuffer(GL_ARRAY_BUFFER, vbuf);
+	glBufferData(GL_ARRAY_BUFFER, points.size() * sizeof(GLfloat), points.data(), GL_STATIC_DRAW);
+
+	// glutPostRedisplay();
+
+	
+}
 
 void display() {
 	try {
@@ -361,13 +417,13 @@ void display() {
 		mat4 xform;
 		float aspect = (float)width / (float)height;
 		// Create perspective projection matrix
-		mat4 proj = perspective(45.0f, aspect, 0.1f, 100.0f);
+		mat4 proj = perspective(fovAngle, aspect, 0.1f, 100.0f);
 		// Create view transformation matrix
 		mat4 view = translate(mat4(1.0f), vec3(0.0, 0.0, -camCoords.z)); 
 		mat4 rot = rotate(mat4(1.0f), radians(camCoords.y), vec3(1.0, 0.0, 0.0));
 		rot = rotate(rot, radians(camCoords.x), vec3(0.0, 1.0, 0.0));
 		xform = proj * view * rot;
-
+		
 		glBindVertexArray(vao);
 
 		// Send the transformation matrix to the shader
@@ -378,40 +434,14 @@ void display() {
 
 		switch (viewmode) {
 		case VIEWMODE_SQUARE:
-			// glBindVertexArray(vao);
-			// // Send transformation matrix to shader
-			// glUniformMatrix4fv(uniXform, 1, GL_FALSE, value_ptr(xform));
-			// // Draw the triangle
-			// glDrawArrays(GL_TRIANGLES, 0, vcount);
-			// glBindVertexArray(0);
 			glUniform1i(uRenderDiscLoc, 0);  // Enable disc rendering
 			break;
 		case VIEWMODE_GAUSS:
-			// glBindVertexArray(vao);
-			// // Send transformation matrix to shader
-			// glUniformMatrix4fv(uniXform, 1, GL_FALSE, value_ptr(xform));
-			// // Draw the triangle
-			// glDrawArrays(GL_TRIANGLES, 0, vcount);
-			// glBindVertexArray(0);
 			glUniform1i(uRenderDiscLoc, 2);
 			break;
 
 		case VIEWMODE_DISC: {
-			// Load model on demand
-			// if (!mesh) mesh = new Mesh("models/cube.obj");
-
-			// // Scale and center mesh using bounding box
-			// pair<vec3, vec3> meshBB = mesh->boundingBox();
-			// mat4 fixBB = scale(mat4(1.0f), vec3(1.0f / length(meshBB.second - meshBB.first)));
-			// fixBB = glm::translate(fixBB, -(meshBB.first + meshBB.second) / 2.0f);
-			// // Concatenate all transformations and upload to shader
-			// xform = xform * fixBB;
-			// glUniformMatrix4fv(uniXform, 1, GL_FALSE, value_ptr(xform));
 			glUniform1i(uRenderDiscLoc, 1);  // Enable disc rendering
-
-			
-			// // Draw the mesh
-			// mesh->draw();
 			break; }
 		}
 
@@ -445,6 +475,8 @@ void reshape(GLint width, GLint height) {
 	glViewport(0, 0, width, height);
 }
 
+
+
 void keyRelease(unsigned char key, int x, int y) {
 	switch (key) {
 	case 27:	// Escape key
@@ -453,23 +485,59 @@ void keyRelease(unsigned char key, int x, int y) {
 	}
 }
 
+// Function to handle special key events (for arrow keys)
+void keyPressed(int key, int x, int y) {	
+		
+	vec2 mouseDelta = vec2(0, 0);
+	float factor = 1.0;
+    switch (key) {
+        case GLUT_KEY_UP:
+			mouseDelta.y += factor;
+            break;
+        case GLUT_KEY_DOWN:
+			mouseDelta.y -= factor;
+            break;
+        case GLUT_KEY_LEFT:
+			mouseDelta.x += factor;
+            break;
+        case GLUT_KEY_RIGHT:
+			mouseDelta.x -= factor;
+            break;
+        default:
+            break;
+    }
+
+	float rotScale = glm::min(width / 450.0f, height / 270.0f);
+	vec2 newAngle = camOrigin + mouseDelta / rotScale;
+	newAngle.y = clamp(newAngle.y, -90.0f, 90.0f);
+	
+	camCoords.x += newAngle.x;
+	camCoords.y += newAngle.y;
+	while (camCoords.x > 180.0f) camCoords.x -= 360.0f;
+	while (camCoords.y < -180.0f) camCoords.y += 360.0f;
+	glutPostRedisplay();
+
+}
+
 void mouseBtn(int button, int state, int x, int y) {
 	if (state == GLUT_DOWN && button == GLUT_LEFT_BUTTON) {
-		// Activate rotation mode
-		camRot = true;
-		camOrigin = vec2(camCoords);
-		mouseOrigin = vec2(x, y);
+		// camRot = true;
+		// camOrigin = vec2(camCoords);
+		// mouseOrigin = vec2(x, y);
+
+		squash(vec2(x, y));
+		glutPostRedisplay();
 	}
 	if (state == GLUT_UP && button == GLUT_LEFT_BUTTON) {
 		// Deactivate rotation
 		camRot = false;
 	}
 	if (button == 3) {
-		camCoords.z = clamp(camCoords.z - 0.1f, 0.1f, 10.0f);
+		camCoords.z = clamp(camCoords.z - 0.1f, 0.1f, 500.0f);
 		glutPostRedisplay();
 	}
 	if (button == 4) {
-		camCoords.z = clamp(camCoords.z + 0.1f, 0.1f, 10.0f);
+		camCoords.z = clamp(camCoords.z + 0.1f, 0.1f, 500.0f);
 		glutPostRedisplay();
 	}
 }
@@ -516,5 +584,4 @@ void cleanup() {
 	if (vao) { glDeleteVertexArrays(1, &vao); vao = 0; }
 	if (vbuf) { glDeleteBuffers(1, &vbuf); vbuf = 0; }
 	vcount = 0;
-	if (mesh) { delete mesh; mesh = NULL; }
 }
