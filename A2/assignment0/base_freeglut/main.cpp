@@ -18,6 +18,7 @@ using namespace glm;
 // Global state
 GLint width, height;
 unsigned int viewmode;	// View triangle or obj file
+unsigned int imagemode;
 GLuint shader;			// Shader program
 GLuint uniXform;		// Shader location of xform mtx
 GLuint vao;				// Vertex array object
@@ -66,7 +67,8 @@ unsigned char* initImage();
 void display();
 void reshape(GLint width, GLint height);
 void keyRelease(unsigned char key, int x, int y);
-void keyPressed(int key, int x, int y);
+void SpecialKeyPressed(int key, int x, int y);
+void keyPressed(unsigned char key, int x, int y);
 void mouseBtn(int button, int state, int x, int y);
 void mouseMove(int x, int y);
 void idle();
@@ -103,6 +105,7 @@ void initState() {
 	width = 0;
 	height = 0;
 	viewmode = VIEWMODE_SQUARE;
+	imagemode = 0;
 	shader = 0;
 	uniXform = 0;
 	vao = 0;
@@ -148,7 +151,8 @@ void initGLUT(int* argc, char** argv) {
 	glutMotionFunc(mouseMove);
 	glutIdleFunc(idle);
 	glutCloseFunc(cleanup);
-	glutSpecialFunc(keyPressed);
+	glutSpecialFunc(SpecialKeyPressed);
+	glutKeyboardFunc(keyPressed);
 
 }
 
@@ -220,7 +224,8 @@ vec2 determineGridSize()
 void initPoints()
 {
 	unsigned char* imageData = initImage();
-
+	points.clear();
+	colors.clear();
 	// Save the image as JPG
 	// stbi_write_jpg("output_image.jpg", imageWidth, imageHeight, channels, imageData, 100); // Quality set to 100
 	vec2 grid = determineGridSize();
@@ -348,8 +353,9 @@ void initPoints()
 
 unsigned char* initImage()
 {
-	unsigned char* imageData = stbi_load("imageB.png", &imageWidth, &imageHeight, &channels, 0);
-
+	unsigned char* imageData;
+	if(imagemode == 0) imageData = stbi_load("imageA.png", &imageWidth, &imageHeight, &channels, 0);
+	else imageData = stbi_load("imageB.png", &imageWidth, &imageHeight, &channels, 0);
 
 	if (!imageData) {
 		std::cerr << "Failed to load image!" << std::endl;
@@ -500,8 +506,25 @@ void keyRelease(unsigned char key, int x, int y) {
 	}
 }
 
+void keyPressed(unsigned char key, int x, int y)
+{
+	switch(key)
+	{
+	case 'r':
+		imagemode = (imagemode + 1) % 2;
+		initPoints();
+		glutPostRedisplay();
+		break;
+	case 'm':
+		viewmode = (viewmode + 1) % 3;
+		glutPostRedisplay();
+		break;
+	}
+}
+
+
 // Function to handle special key events (for arrow keys)
-void keyPressed(int key, int x, int y) {	
+void SpecialKeyPressed(int key, int x, int y) {	
 		
 	vec2 mouseDelta = vec2(0, 0);
 	float factor = 1.0;
