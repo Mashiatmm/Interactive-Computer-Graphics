@@ -23,6 +23,7 @@ public:
 	struct Vtx {
 		glm::vec3 pos;		// Position
 		glm::vec3 norm;		// Normal
+		// glm::vec2 texCoords;
 	};
 
 protected:

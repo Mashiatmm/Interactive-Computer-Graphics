@@ -1,16 +1,18 @@
 #version 330
-layout (location = 0) out vec4 gPosition;
+layout (location = 0) out vec3 gPosition;
 layout (location = 1) out vec3 gNormal;
-layout (location = 2) out vec4 gAlbedoSpec;
+layout (location = 2) out vec3 gAlbedo;
 
-smooth in vec3 fragNorm;	// Interpolated model-space normal
-in vec3 fragPos;
+// in vec2 TexCoords;
+in vec3 FragPos;
+in vec3 Normal;
 
-out vec3 outCol;	// Final pixel color
-
-void main() {
-	// Visualize normals as colors
-	gPosition = vec4(fragPos, 1.0);
-	gNormal = normalize(fragNorm);
-	gAlbedoSpec.rgb = vec3(0.95); // diffuse per-fragment color
+void main()
+{    
+    // store the fragment position vector in the first gbuffer texture
+    gPosition = FragPos;
+    // also store the per-fragment normals into the gbuffer
+    gNormal = normalize(Normal);
+    // and the diffuse per-fragment color
+    gAlbedo.rgb = vec3(0.95);
 }

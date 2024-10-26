@@ -1,4 +1,5 @@
 #include <iostream>
+#include <random>
 #include <cassert>
 #include <glm/glm.hpp>
 #include <glm/gtc/type_ptr.hpp>
@@ -12,14 +13,27 @@ using namespace glm;
 
 // Global state
 GLint width, height;
-unsigned int viewmode;	// View triangle or obj file
-GLuint shader;			// Shader program
-GLuint uniXform;		// Shader location of xform mtx
+GLuint geometryPassShader, ssaoPassShader, blurShader, LightingPassShader, simpleQuadShader;
+// GLuint shader;			// Shader program
+// GLuint uniXform;		// Shader location of xform mtx
 GLuint vao;				// Vertex array object
 GLuint vbuf;			// Vertex buffer
 GLsizei vcount;			// Number of vertices
 Mesh* mesh;				// Mesh loaded from .obj file
 
+unsigned int gBuffer;
+unsigned int gPosition, gNormal, gAlbedo, rboDepth;
+unsigned int ssaoFBO, ssaoBlurFBO;
+unsigned int ssaoColorBuffer, ssaoColorBufferBlur;
+unsigned int noiseTexture;
+std::vector<glm::vec3> ssaoKernel;
+unsigned int quadVAO = 0;
+unsigned int quadVBO = 0;
+unsigned int cubeVAO = 0;
+unsigned int cubeVBO = 0;
+// lighting info
+// -------------
+glm::vec3 lightPos, lightColor;
 
 // Camera state
 vec3 camCoords;			// Spherical coordinates (theta, phi, radius) of the camera
@@ -27,20 +41,24 @@ bool camRot;			// Whether the camera is currently rotating
 vec2 camOrigin;			// Original camera coordinates upon clicking
 vec2 mouseOrigin;		// Original mouse coordinates upon clicking
 
-// ADDED BY MASHIAT
+
 bool debug;
 
 // Constants
 const int MENU_VIEWMODE = 0;		// Toggle view mode
 const int MENU_EXIT = 1;			// Exit application
-const int VIEWMODE_TRIANGLE = 0;	// View triangle
-const int VIEWMODE_OBJ = 1;			// View obj-loaded mesh
 
 // Initialization functions
 void initState();
 void initGLUT(int* argc, char** argv);
 void initOpenGL();
 void initTriangle();
+void initGBuffer();
+void initSSAOBuffer();
+float lerp(float a, float b, float f);
+glm::mat4 getCamViewMatrix();
+void renderQuad();
+void renderCube();
 
 // Callback functions
 void display();
@@ -59,6 +77,8 @@ int main(int argc, char** argv) {
 		initGLUT(&argc, argv);
 		initOpenGL();
 		initTriangle();
+		initGBuffer();
+		initSSAOBuffer();
 
 	} catch (const exception& e) {
 		// Handle any errors
@@ -73,19 +93,30 @@ int main(int argc, char** argv) {
 	return 0;
 }
 
+float lerp(float a, float b, float f)
+{
+    return a + f * (b - a);
+}
+
 void initState() {
 	// Initialize global state
 	width = 0;
 	height = 0;
-	viewmode = VIEWMODE_OBJ;
-	shader = 0;
-	uniXform = 0;
+	// shader = 0;
+	geometryPassShader = 0;
+	ssaoPassShader = 0;
+	blurShader = 0;
+	LightingPassShader = 0;
+	simpleQuadShader = 0;
+	// uniXform = 0;
 	vao = 0;
 	vbuf = 0;
 	vcount = 0;
 	mesh = NULL;
+	lightPos = glm::vec3(2.0, 4.0, -2.0);
+	lightColor = glm::vec3(1.0, 1.0, 1.0);
 
-	camCoords = vec3(0.0, 0.0, 10.0);
+	camCoords = vec3(0.0, 0.0, 5.0);
 	camRot = false;
 
 	// ADDED BY MASHIAT
@@ -122,7 +153,7 @@ void initGLUT(int* argc, char** argv) {
 
 void initOpenGL() {
 	// Set clear color and depth
-	glClearColor(0.0f, 0.f, 0.0f, 1.0f);
+	glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
 	glClearDepth(1.0f);
 	// Enable depth testing
 	glEnable(GL_DEPTH_TEST);
@@ -131,13 +162,49 @@ void initOpenGL() {
 	vector<GLuint> shaders;
 	shaders.push_back(compileShader(GL_VERTEX_SHADER, "sh_v.glsl"));
 	shaders.push_back(compileShader(GL_FRAGMENT_SHADER, "sh_f.glsl"));
-	shader = linkProgram(shaders);
+	geometryPassShader = linkProgram(shaders);
 	// Release shader sources
 	for (auto s = shaders.begin(); s != shaders.end(); ++s)
 		glDeleteShader(*s);
 	shaders.clear();
+
+
+	shaders.push_back(compileShader(GL_VERTEX_SHADER, "ssao_v.glsl"));
+	shaders.push_back(compileShader(GL_FRAGMENT_SHADER, "ssao_f.glsl"));
+	ssaoPassShader = linkProgram(shaders);
+
+	// Release shader sources
+	for (auto s = shaders.begin(); s != shaders.end(); ++s)
+		glDeleteShader(*s);
+	shaders.clear();
+
+
+	shaders.push_back(compileShader(GL_VERTEX_SHADER, "ssao_v.glsl"));
+	shaders.push_back(compileShader(GL_FRAGMENT_SHADER, "ssao_f_blur.glsl"));
+	blurShader = linkProgram(shaders);
+	// Release shader sources
+	for (auto s = shaders.begin(); s != shaders.end(); ++s)
+		glDeleteShader(*s);
+	shaders.clear();
+
+	shaders.push_back(compileShader(GL_VERTEX_SHADER, "ssao_v.glsl"));
+	shaders.push_back(compileShader(GL_FRAGMENT_SHADER, "ssao_f_lighting.glsl"));
+	LightingPassShader = linkProgram(shaders);
+	// Release shader sources
+	for (auto s = shaders.begin(); s != shaders.end(); ++s)
+		glDeleteShader(*s);
+	shaders.clear();
+
 	// Locate uniforms
-	uniXform = glGetUniformLocation(shader, "xform");
+	// uniXform = glGetUniformLocation(shader, "xform");
+
+	vector<GLuint> quadShader;
+	quadShader.push_back(compileShader(GL_VERTEX_SHADER, "ssao_v.glsl"));
+	quadShader.push_back(compileShader(GL_FRAGMENT_SHADER, "simple_texture_fs.glsl"));
+	simpleQuadShader = linkProgram(quadShader);
+	for (auto s = quadShader.begin(); s != quadShader.end(); ++s)
+		glDeleteShader(*s);
+	quadShader.clear();
 	assert(glGetError() == GL_NO_ERROR);
 }
 
@@ -175,16 +242,266 @@ void initTriangle() {
 
 }
 
+void initGBuffer()
+{
+    glGenFramebuffers(1, &gBuffer);
+    glBindFramebuffer(GL_FRAMEBUFFER, gBuffer);
+    // position color buffer
+    glGenTextures(1, &gPosition);
+    glBindTexture(GL_TEXTURE_2D, gPosition);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, width, height, 0, GL_RGBA, GL_FLOAT, NULL);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, gPosition, 0);
+    // normal color buffer
+    glGenTextures(1, &gNormal);
+    glBindTexture(GL_TEXTURE_2D, gNormal);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, width, height, 0, GL_RGBA, GL_FLOAT, NULL);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, gNormal, 0);
+    // color + specular color buffer
+    glGenTextures(1, &gAlbedo);
+    glBindTexture(GL_TEXTURE_2D, gAlbedo);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT2, GL_TEXTURE_2D, gAlbedo, 0);
+    // tell OpenGL which color attachments we'll use (of this framebuffer) for rendering 
+    unsigned int attachments[3] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2 };
+    glDrawBuffers(3, attachments);
+    // create and attach depth buffer (renderbuffer)
+    glGenRenderbuffers(1, &rboDepth);
+    glBindRenderbuffer(GL_RENDERBUFFER, rboDepth);
+    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT, width, height);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, rboDepth);
+    // finally check if framebuffer is complete
+    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+        std::cout << "Framebuffer not complete!" << std::endl;
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+}
+
+void initSSAOBuffer()
+{
+    glGenFramebuffers(1, &ssaoFBO);  
+	glGenFramebuffers(1, &ssaoBlurFBO);
+    glBindFramebuffer(GL_FRAMEBUFFER, ssaoFBO);
+    // SSAO color buffer
+    glGenTextures(1, &ssaoColorBuffer);
+    glBindTexture(GL_TEXTURE_2D, ssaoColorBuffer);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RED, width, height, 0, GL_RED, GL_FLOAT, NULL);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, ssaoColorBuffer, 0);
+    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+        std::cout << "SSAO Framebuffer not complete!" << std::endl;
+    // and blur stage
+    glBindFramebuffer(GL_FRAMEBUFFER, ssaoBlurFBO);
+    glGenTextures(1, &ssaoColorBufferBlur);
+    glBindTexture(GL_TEXTURE_2D, ssaoColorBufferBlur);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RED, width, height, 0, GL_RED, GL_FLOAT, NULL);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, ssaoColorBufferBlur, 0);
+    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+        std::cout << "SSAO Blur Framebuffer not complete!" << std::endl;
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+    // generate sample kernel
+    // ----------------------
+    std::uniform_real_distribution<GLfloat> randomFloats(0.0, 1.0); // generates random floats between 0.0 and 1.0
+    std::default_random_engine generator;
+    for (unsigned int i = 0; i < 64; ++i)
+    {
+        glm::vec3 sample(randomFloats(generator) * 2.0 - 1.0, randomFloats(generator) * 2.0 - 1.0, randomFloats(generator));
+        sample = glm::normalize(sample);
+        sample *= randomFloats(generator);
+        float scale = float(i) / 64.0f;
+
+        // scale samples s.t. they're more aligned to center of kernel
+        scale = lerp(0.1f, 1.0f, scale * scale);
+        sample *= scale;
+        ssaoKernel.push_back(sample);
+    }
+
+    // generate noise texture
+    // ----------------------
+    std::vector<glm::vec3> ssaoNoise;
+    for (unsigned int i = 0; i < 16; i++)
+    {
+        glm::vec3 noise(randomFloats(generator) * 2.0 - 1.0, randomFloats(generator) * 2.0 - 1.0, 0.0f); // rotate around z-axis (in tangent space)
+        ssaoNoise.push_back(noise);
+    }
+	glGenTextures(1, &noiseTexture);
+    glBindTexture(GL_TEXTURE_2D, noiseTexture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, 4, 4, 0, GL_RGB, GL_FLOAT, &ssaoNoise[0]);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+
+	
+
+    // shader configuration
+    // --------------------
+    // glUseProgram(LightingPassShader);
+	// glUniform1f(glGetUniformLocation(LightingPassShader, "gPosition"), 0); 
+	// glUniform1f(glGetUniformLocation(LightingPassShader, "gNormal"), 1); 
+	// glUniform1f(glGetUniformLocation(LightingPassShader, "gAlbedo"), 2);
+	// glUniform1f(glGetUniformLocation(LightingPassShader, "ssao"), 3); 
+ 
+
+	// glUseProgram(ssaoPassShader);
+	
+    // glUseProgram(blurShader);
+	// glUniform1f(glGetUniformLocation(blurShader, "ssaoInput"), 0); 
+	// glUseProgram(0); // NOT SURE - ADDED BY MASHIAT
+}
+
+// renderCube() renders a 1x1 3D cube in NDC.
+// -------------------------------------------------
+
+void renderCube()
+{
+    // initialize (if necessary)
+    if (cubeVAO == 0)
+    {
+        float vertices[] = {
+            // back face
+            -1.0f, -1.0f, -1.0f,  0.0f,  0.0f, -1.0f, 0.0f, 0.0f, // bottom-left
+             1.0f,  1.0f, -1.0f,  0.0f,  0.0f, -1.0f, 1.0f, 1.0f, // top-right
+             1.0f, -1.0f, -1.0f,  0.0f,  0.0f, -1.0f, 1.0f, 0.0f, // bottom-right         
+             1.0f,  1.0f, -1.0f,  0.0f,  0.0f, -1.0f, 1.0f, 1.0f, // top-right
+            -1.0f, -1.0f, -1.0f,  0.0f,  0.0f, -1.0f, 0.0f, 0.0f, // bottom-left
+            -1.0f,  1.0f, -1.0f,  0.0f,  0.0f, -1.0f, 0.0f, 1.0f, // top-left
+            // front face
+            -1.0f, -1.0f,  1.0f,  0.0f,  0.0f,  1.0f, 0.0f, 0.0f, // bottom-left
+             1.0f, -1.0f,  1.0f,  0.0f,  0.0f,  1.0f, 1.0f, 0.0f, // bottom-right
+             1.0f,  1.0f,  1.0f,  0.0f,  0.0f,  1.0f, 1.0f, 1.0f, // top-right
+             1.0f,  1.0f,  1.0f,  0.0f,  0.0f,  1.0f, 1.0f, 1.0f, // top-right
+            -1.0f,  1.0f,  1.0f,  0.0f,  0.0f,  1.0f, 0.0f, 1.0f, // top-left
+            -1.0f, -1.0f,  1.0f,  0.0f,  0.0f,  1.0f, 0.0f, 0.0f, // bottom-left
+            // left face
+            -1.0f,  1.0f,  1.0f, -1.0f,  0.0f,  0.0f, 1.0f, 0.0f, // top-right
+            -1.0f,  1.0f, -1.0f, -1.0f,  0.0f,  0.0f, 1.0f, 1.0f, // top-left
+            -1.0f, -1.0f, -1.0f, -1.0f,  0.0f,  0.0f, 0.0f, 1.0f, // bottom-left
+            -1.0f, -1.0f, -1.0f, -1.0f,  0.0f,  0.0f, 0.0f, 1.0f, // bottom-left
+            -1.0f, -1.0f,  1.0f, -1.0f,  0.0f,  0.0f, 0.0f, 0.0f, // bottom-right
+            -1.0f,  1.0f,  1.0f, -1.0f,  0.0f,  0.0f, 1.0f, 0.0f, // top-right
+            // right face
+             1.0f,  1.0f,  1.0f,  1.0f,  0.0f,  0.0f, 1.0f, 0.0f, // top-left
+             1.0f, -1.0f, -1.0f,  1.0f,  0.0f,  0.0f, 0.0f, 1.0f, // bottom-right
+             1.0f,  1.0f, -1.0f,  1.0f,  0.0f,  0.0f, 1.0f, 1.0f, // top-right         
+             1.0f, -1.0f, -1.0f,  1.0f,  0.0f,  0.0f, 0.0f, 1.0f, // bottom-right
+             1.0f,  1.0f,  1.0f,  1.0f,  0.0f,  0.0f, 1.0f, 0.0f, // top-left
+             1.0f, -1.0f,  1.0f,  1.0f,  0.0f,  0.0f, 0.0f, 0.0f, // bottom-left     
+            // bottom face
+            -1.0f, -1.0f, -1.0f,  0.0f, -1.0f,  0.0f, 0.0f, 1.0f, // top-right
+             1.0f, -1.0f, -1.0f,  0.0f, -1.0f,  0.0f, 1.0f, 1.0f, // top-left
+             1.0f, -1.0f,  1.0f,  0.0f, -1.0f,  0.0f, 1.0f, 0.0f, // bottom-left
+             1.0f, -1.0f,  1.0f,  0.0f, -1.0f,  0.0f, 1.0f, 0.0f, // bottom-left
+            -1.0f, -1.0f,  1.0f,  0.0f, -1.0f,  0.0f, 0.0f, 0.0f, // bottom-right
+            -1.0f, -1.0f, -1.0f,  0.0f, -1.0f,  0.0f, 0.0f, 1.0f, // top-right
+            // top face
+            -1.0f,  1.0f, -1.0f,  0.0f,  1.0f,  0.0f, 0.0f, 1.0f, // top-left
+             1.0f,  1.0f , 1.0f,  0.0f,  1.0f,  0.0f, 1.0f, 0.0f, // bottom-right
+             1.0f,  1.0f, -1.0f,  0.0f,  1.0f,  0.0f, 1.0f, 1.0f, // top-right     
+             1.0f,  1.0f,  1.0f,  0.0f,  1.0f,  0.0f, 1.0f, 0.0f, // bottom-right
+            -1.0f,  1.0f, -1.0f,  0.0f,  1.0f,  0.0f, 0.0f, 1.0f, // top-left
+            -1.0f,  1.0f,  1.0f,  0.0f,  1.0f,  0.0f, 0.0f, 0.0f  // bottom-left        
+        };
+        glGenVertexArrays(1, &cubeVAO);
+        glGenBuffers(1, &cubeVBO);
+        // fill buffer
+        glBindBuffer(GL_ARRAY_BUFFER, cubeVBO);
+        glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
+        // link vertex attributes
+        glBindVertexArray(cubeVAO);
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)0);
+        glEnableVertexAttribArray(1);
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(3 * sizeof(float)));
+        glEnableVertexAttribArray(2);
+        glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(6 * sizeof(float)));
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+        glBindVertexArray(0);
+    }
+    // render Cube
+    glBindVertexArray(cubeVAO);
+    glDrawArrays(GL_TRIANGLES, 0, 36);
+    glBindVertexArray(0);
+}
+
+// renderQuad() renders a 1x1 XY quad in NDC
+// -----------------------------------------
+
+void renderQuad()
+{
+    if (quadVAO == 0)
+    {
+        float quadVertices[] = {
+            // positions        // texture Coords
+            -1.0f,  1.0f, 0.0f, 0.0f, 1.0f,
+            -1.0f, -1.0f, 0.0f, 0.0f, 0.0f,
+             1.0f,  1.0f, 0.0f, 1.0f, 1.0f,
+             1.0f, -1.0f, 0.0f, 1.0f, 0.0f,
+        };
+        // setup plane VAO
+        glGenVertexArrays(1, &quadVAO);
+        glGenBuffers(1, &quadVBO);
+        glBindVertexArray(quadVAO);
+        glBindBuffer(GL_ARRAY_BUFFER, quadVBO);
+        glBufferData(GL_ARRAY_BUFFER, sizeof(quadVertices), &quadVertices, GL_STATIC_DRAW);
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)0);
+        glEnableVertexAttribArray(1);
+        glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)(3 * sizeof(float)));
+    }
+    glBindVertexArray(quadVAO);
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    glBindVertexArray(0);
+}
+
+// returns the view matrix calculated using Euler Angles and the LookAt Matrix
+glm::mat4 getCamViewMatrix()
+{
+	glm::vec3 Position = glm::vec3(
+		camCoords.z * sin(radians(camCoords.y)) * sin(radians(camCoords.x))
+	);
+	glm::vec3 Up = glm::vec3(0.0f, 1.0f, 0.0f);
+	glm::vec3 Front = glm::normalize(-Position);
+	return glm::lookAt(Position, Position + Front, Up);
+}
+
+void visualizeGBuffer(GLuint texture) {
+    // Clear the screen
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    // Bind the simple shader
+    glUseProgram(simpleQuadShader);
+
+    // Bind the texture you want to visualize
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, texture);
+    glUniform1i(glGetUniformLocation(simpleQuadShader, "gBufferTexture"), 0);
+
+    // Render a fullscreen quad to display the texture
+    renderQuad();
+
+    // Swap buffers
+    glutSwapBuffers();
+}
+
 
 
 void display() {
 	try {
-		// Clear the back buffer
-		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
-		// Get ready to draw
-		glUseProgram(shader);
-
+		
+		// Bind the G-buffer framebuffer (gBuffer) for geometry pass
+	
 		mat4 xform;
 		float aspect = (float)width / (float)height;
 		// Create perspective projection matrix
@@ -193,40 +510,122 @@ void display() {
 		mat4 view = translate(mat4(1.0f), vec3(0.0, 0.0, -camCoords.z)); 
 		mat4 rot = rotate(mat4(1.0f), radians(camCoords.y), vec3(1.0, 0.0, 0.0));
 		rot = rotate(rot, radians(camCoords.x), vec3(0.0, 1.0, 0.0));
-		xform = proj * view * rot;
+		// xform = proj * view * rot;
 
-		switch (viewmode) {
-		case VIEWMODE_TRIANGLE:
-			glBindVertexArray(vao);
-			// Send transformation matrix to shader
-			glUniformMatrix4fv(uniXform, 1, GL_FALSE, value_ptr(xform));
-			// Draw the triangle
-			glDrawArrays(GL_TRIANGLES, 0, vcount);
-			glBindVertexArray(0);
-			break;
+		glBindFramebuffer(GL_FRAMEBUFFER, gBuffer);
+		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+		glUseProgram(geometryPassShader);
 
-		case VIEWMODE_OBJ: {
-			// Load model on demand
-			if (!mesh) mesh = new Mesh("models/cube.obj");
+		// Load and prepare mesh if not already loaded
+		if (!mesh) mesh = new Mesh("models/bunny2.obj");
+		
+		// Scale and center mesh using bounding box
+		pair<vec3, vec3> meshBB = mesh->boundingBox();
+		mat4 fixBB = scale(mat4(1.0f), vec3(1.0f / length(meshBB.second - meshBB.first)));
+		fixBB = glm::translate(fixBB, -(meshBB.first + meshBB.second) / 2.0f);
+		// Concatenate all transformations and upload to shader
+		// xform = xform * fixBB;
 
-			// Scale and center mesh using bounding box
-			pair<vec3, vec3> meshBB = mesh->boundingBox();
-			mat4 fixBB = scale(mat4(1.0f), vec3(1.0f / length(meshBB.second - meshBB.first)));
-			fixBB = glm::translate(fixBB, -(meshBB.first + meshBB.second) / 2.0f);
-			// Concatenate all transformations and upload to shader
-			xform = xform * fixBB;
-			glUniformMatrix4fv(uniXform, 1, GL_FALSE, value_ptr(xform));
-			
-			// Draw the mesh
-			mesh->draw();
-			break; }
-		}
+		// Use geometry pass shader program
+
+		// Upload uniform matrices
+		glUniformMatrix4fv(glGetUniformLocation(geometryPassShader, "view"), 1, GL_FALSE, value_ptr(view * rot));
+		glUniformMatrix4fv(glGetUniformLocation(geometryPassShader, "projection"), 1, GL_FALSE, value_ptr(proj));
+
+		// room cube
+        glm::mat4 model = glm::mat4(1.0f);
+		model = glm::translate(model, glm::vec3(0.0, 7.0f, 0.0f));
+		model = glm::scale(model, glm::vec3(7.5f, 7.5f, 7.5f));
+		glUniformMatrix4fv(glGetUniformLocation(geometryPassShader, "model"), 1, GL_FALSE, value_ptr(model));
+		glUniform1i(glGetUniformLocation(geometryPassShader, "invertedNormals"), 1); 
+		renderCube();
+		// glUniformMatrix4fv(glGetUniformLocation(geometryPassShader, "xform"), 1, GL_FALSE, value_ptr(xform));
+		glUniformMatrix4fv(glGetUniformLocation(geometryPassShader, "model"), 1, GL_FALSE, value_ptr(fixBB));
+		glUniform1i(glGetUniformLocation(geometryPassShader, "invertedNormals"), 0); 
+
+		// Draw the mesh
+		mesh->draw();
+
+		// Unbind framebuffer kernelto switch back to the default framebuffer
+		glBindFramebuffer(GL_FRAMEBUFFER, 0);
 		assert(glGetError() == GL_NO_ERROR);
 
-		// Revert context state
-		glUseProgram(0);
+
+
+		// 2. generate SSAO texture
+        // ------------------------
+        glBindFramebuffer(GL_FRAMEBUFFER, ssaoFBO);
+		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+		glUseProgram(ssaoPassShader);
+		// Send kernel + rotation 
+		for (unsigned int i = 0; i < 64; ++i){
+			    std::string uniformName = "samples[" + std::to_string(i) + "]";
+
+			glUniform3fv(glGetUniformLocation(ssaoPassShader, uniformName.c_str()), 1, &ssaoKernel[i][0]); 
+		}
+		glUniformMatrix4fv(glGetUniformLocation(ssaoPassShader, "projection"), 1, GL_FALSE, value_ptr(proj));
+
+		glActiveTexture(GL_TEXTURE0);
+		glBindTexture(GL_TEXTURE_2D, gPosition);
+		glActiveTexture(GL_TEXTURE1);
+		glBindTexture(GL_TEXTURE_2D, gNormal);
+		glActiveTexture(GL_TEXTURE2);
+		glBindTexture(GL_TEXTURE_2D, noiseTexture);
+		renderQuad();
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+		assert(glGetError() == GL_NO_ERROR);
+		// visualizeGBuffer(ssaoColorBuffer);
+
+		// // Revert state
+		// // glUseProgram(0);
+
+		// 3. blur SSAO texture to remove noise
+        // ------------------------------------
+        glBindFramebuffer(GL_FRAMEBUFFER, ssaoBlurFBO);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+		glUseProgram(blurShader);
+		glActiveTexture(GL_TEXTURE0);
+		glBindTexture(GL_TEXTURE_2D, ssaoColorBuffer);
+		glUniform1i(glGetUniformLocation(blurShader, "ssaoInput"), 0);
+		renderQuad();
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+		assert(glGetError() == GL_NO_ERROR);
+
+		// visualizeGBuffer(ssaoColorBufferBlur);
+
+
+		// 4. lighting pass: traditional deferred Blinn-Phong lighting with added screen-space ambient occlusion
+        // -----------------------------------------------------------------------------------------------------
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+		glUseProgram(LightingPassShader);
+        // send light relevant uniforms
+        glm::vec3 lightPosView = glm::vec3(getCamViewMatrix() * glm::vec4(lightPos, 1.0));
+        glUniform3fv(glGetUniformLocation(LightingPassShader, "light.Position"), 1, &lightPosView[0]); 
+		glUniform3fv(glGetUniformLocation(LightingPassShader, "light.Color"), 1, &lightColor[0]); 
+
+        // Update attenuation parameters
+        const float linear    = 0.09f;
+        const float quadratic = 0.032f;
+		glUniform1f(glGetUniformLocation(LightingPassShader, "light.Linear"), linear); 
+		glUniform1f(glGetUniformLocation(LightingPassShader, "light.Quadratic"), quadratic);
+		glUniform1i(glGetUniformLocation(LightingPassShader, "gPosition"), 0); 
+		glUniform1i(glGetUniformLocation(LightingPassShader, "gNormal"), 1); 
+		glUniform1i(glGetUniformLocation(LightingPassShader, "gAlbedo"), 2);
+		glUniform1i(glGetUniformLocation(LightingPassShader, "ssao"), 3); 
+       
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, gPosition);
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, gNormal);
+        glActiveTexture(GL_TEXTURE2);
+        glBindTexture(GL_TEXTURE_2D, gAlbedo);
+        glActiveTexture(GL_TEXTURE3); // add extra SSAO texture to lighting pass
+        glBindTexture(GL_TEXTURE_2D, ssaoColorBufferBlur);
+		renderQuad();
+		assert(glGetError() == GL_NO_ERROR);
 
 		// Display the back buffer
+		glUseProgram(0);
 		glutSwapBuffers();
 
 		glutPostRedisplay();
@@ -296,7 +695,6 @@ void idle() {
 void menu(int cmd) {
 	switch (cmd) {
 	case MENU_VIEWMODE:
-		viewmode = (viewmode + 1) % 2;
 		glutPostRedisplay();	// Tell GLUT to redraw the screen
 		break;
 
@@ -308,8 +706,13 @@ void menu(int cmd) {
 
 void cleanup() {
 	// Release all resources
-	if (shader) { glDeleteProgram(shader); shader = 0; }
-	uniXform = 0;
+	if (geometryPassShader) { glDeleteProgram(geometryPassShader); geometryPassShader = 0; }
+	if (ssaoPassShader) { glDeleteProgram(ssaoPassShader); ssaoPassShader = 0; }
+	if (blurShader) { glDeleteProgram(blurShader); blurShader = 0; }
+	if (LightingPassShader) { glDeleteProgram(LightingPassShader); LightingPassShader = 0; }
+	if (simpleQuadShader) { glDeleteProgram(simpleQuadShader); simpleQuadShader = 0; }
+
+	// uniXform = 0;
 	if (vao) { glDeleteVertexArrays(1, &vao); vao = 0; }
 	if (vbuf) { glDeleteBuffers(1, &vbuf); vbuf = 0; }
 	vcount = 0;

@@ -1,18 +1,26 @@
 #version 330
+layout (location = 0) in vec3 aPos;
+layout (location = 1) in vec3 aNormal;
+// layout (location = 2) in vec2 aTexCoords;
 
-layout(location = 0) in vec3 pos;		// Model-space position
-layout(location = 1) in vec3 norm;		// Model-space normal
+out vec3 FragPos;
+// out vec2 TexCoords;
+out vec3 Normal;
 
-smooth out vec3 fragNorm;	// Model-space interpolated normal
-out vec3 fragPos;
+uniform bool invertedNormals;
 
-uniform mat4 xform;			// Model-to-clip space transform
+uniform mat4 model;
+uniform mat4 view;
+uniform mat4 projection;
 
-void main() {
-	// Transform vertex position
-	gl_Position = xform * vec4(pos, 1.0);
-
-	// Interpolate normals
-	fragNorm = norm;
-	fragPos = pos;
+void main()
+{
+    vec4 viewPos = view * model * vec4(aPos, 1.0);
+    FragPos = viewPos.xyz; 
+    // TexCoords = aTexCoords;
+    
+    mat3 normalMatrix = transpose(inverse(mat3(view * model)));
+    Normal = normalMatrix * (invertedNormals ? -aNormal : aNormal);
+    
+    gl_Position = projection * viewPos;
 }

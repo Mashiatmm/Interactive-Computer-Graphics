@@ -182,7 +182,7 @@ void initTriangle() {
 }
 
 void initObj() {
-	if (!mesh) mesh = new Mesh("models/triangle.obj");
+	if (!mesh) mesh = new Mesh("models/bunny2.obj");
 
 	// Scale and center mesh using bounding box
 	meshBB = mesh->boundingBox();	

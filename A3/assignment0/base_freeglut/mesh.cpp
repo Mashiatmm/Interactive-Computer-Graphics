@@ -130,6 +130,10 @@ void Mesh::load(string filename) {
 	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vtx), NULL);
 	glEnableVertexAttribArray(1);
 	glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(Vtx), (GLvoid*)sizeof(vec3));
+	// //Added by Mashiat
+	// glEnableVertexAttribArray(2);  // aTexCoords
+	// glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(Vtx), (GLvoid*)(sizeof(vec3) + sizeof(vec3)));
+
 
 	glBindVertexArray(0);
 	glBindBuffer(GL_ARRAY_BUFFER, 0);
