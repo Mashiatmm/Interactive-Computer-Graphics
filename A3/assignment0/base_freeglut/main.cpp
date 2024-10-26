@@ -20,7 +20,8 @@ GLuint vao;				// Vertex array object
 GLuint vbuf;			// Vertex buffer
 GLsizei vcount;			// Number of vertices
 Mesh* mesh;				// Mesh loaded from .obj file
-
+std::vector<Mesh*> meshList;
+unsigned int numObj;
 unsigned int gBuffer;
 unsigned int gPosition, gNormal, gAlbedo, rboDepth;
 unsigned int ssaoFBO, ssaoBlurFBO;
@@ -34,6 +35,9 @@ unsigned int cubeVBO = 0;
 // lighting info
 // -------------
 glm::vec3 lightPos, lightColor;
+float k, m;
+int n;
+char activate;
 
 // Camera state
 vec3 camCoords;			// Spherical coordinates (theta, phi, radius) of the camera
@@ -64,6 +68,8 @@ void renderCube();
 void display();
 void reshape(GLint width, GLint height);
 void keyRelease(unsigned char key, int x, int y);
+void keyPressed(unsigned char key, int x, int y);
+void SpecialKeyPressed(int key, int x, int y);
 void mouseBtn(int button, int state, int x, int y);
 void mouseMove(int x, int y);
 void idle();
@@ -102,13 +108,16 @@ void initState() {
 	// Initialize global state
 	width = 0;
 	height = 0;
-	// shader = 0;
 	geometryPassShader = 0;
 	ssaoPassShader = 0;
 	blurShader = 0;
 	LightingPassShader = 0;
 	simpleQuadShader = 0;
-	// uniXform = 0;
+	k = 1;
+	m = 1;
+	n = 64;
+	activate = '\0';
+	numObj = 2;
 	vao = 0;
 	vbuf = 0;
 	vcount = 0;
@@ -147,6 +156,8 @@ void initGLUT(int* argc, char** argv) {
 	glutKeyboardUpFunc(keyRelease);
 	glutMouseFunc(mouseBtn);
 	glutMotionFunc(mouseMove);
+	glutKeyboardFunc(keyPressed);
+	glutSpecialFunc(SpecialKeyPressed);
 	glutIdleFunc(idle);
 	glutCloseFunc(cleanup);
 }
@@ -319,7 +330,7 @@ void initSSAOBuffer()
         glm::vec3 sample(randomFloats(generator) * 2.0 - 1.0, randomFloats(generator) * 2.0 - 1.0, randomFloats(generator));
         sample = glm::normalize(sample);
         sample *= randomFloats(generator);
-        float scale = float(i) / 64.0f;
+        float scale = float(i) / n;
 
         // scale samples s.t. they're more aligned to center of kernel
         scale = lerp(0.1f, 1.0f, scale * scale);
@@ -330,7 +341,7 @@ void initSSAOBuffer()
     // generate noise texture
     // ----------------------
     std::vector<glm::vec3> ssaoNoise;
-    for (unsigned int i = 0; i < 16; i++)
+    for (unsigned int i = 0; i < 64; i++)
     {
         glm::vec3 noise(randomFloats(generator) * 2.0 - 1.0, randomFloats(generator) * 2.0 - 1.0, 0.0f); // rotate around z-axis (in tangent space)
         ssaoNoise.push_back(noise);
@@ -347,18 +358,18 @@ void initSSAOBuffer()
 
     // shader configuration
     // --------------------
-    // glUseProgram(LightingPassShader);
-	// glUniform1f(glGetUniformLocation(LightingPassShader, "gPosition"), 0); 
-	// glUniform1f(glGetUniformLocation(LightingPassShader, "gNormal"), 1); 
-	// glUniform1f(glGetUniformLocation(LightingPassShader, "gAlbedo"), 2);
-	// glUniform1f(glGetUniformLocation(LightingPassShader, "ssao"), 3); 
+    glUseProgram(LightingPassShader);
+	glUniform1i(glGetUniformLocation(LightingPassShader, "gPosition"), 0); 
+	glUniform1i(glGetUniformLocation(LightingPassShader, "gNormal"), 1); 
+	glUniform1i(glGetUniformLocation(LightingPassShader, "gAlbedo"), 2);
+	glUniform1i(glGetUniformLocation(LightingPassShader, "ssao"), 3); 
  
 
-	// glUseProgram(ssaoPassShader);
+	glUseProgram(ssaoPassShader);
 	
-    // glUseProgram(blurShader);
-	// glUniform1f(glGetUniformLocation(blurShader, "ssaoInput"), 0); 
-	// glUseProgram(0); // NOT SURE - ADDED BY MASHIAT
+    glUseProgram(blurShader);
+	glUniform1i(glGetUniformLocation(blurShader, "ssaoInput"), 0); 
+	glUseProgram(0); // NOT SURE - ADDED BY MASHIAT
 }
 
 // renderCube() renders a 1x1 3D cube in NDC.
@@ -516,13 +527,6 @@ void display() {
 		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 		glUseProgram(geometryPassShader);
 
-		// Load and prepare mesh if not already loaded
-		if (!mesh) mesh = new Mesh("models/bunny2.obj");
-		
-		// Scale and center mesh using bounding box
-		pair<vec3, vec3> meshBB = mesh->boundingBox();
-		mat4 fixBB = scale(mat4(1.0f), vec3(1.0f / length(meshBB.second - meshBB.first)));
-		fixBB = glm::translate(fixBB, -(meshBB.first + meshBB.second) / 2.0f);
 		// Concatenate all transformations and upload to shader
 		// xform = xform * fixBB;
 
@@ -531,7 +535,7 @@ void display() {
 		// Upload uniform matrices
 		glUniformMatrix4fv(glGetUniformLocation(geometryPassShader, "view"), 1, GL_FALSE, value_ptr(view * rot));
 		glUniformMatrix4fv(glGetUniformLocation(geometryPassShader, "projection"), 1, GL_FALSE, value_ptr(proj));
-
+		
 		// room cube
         glm::mat4 model = glm::mat4(1.0f);
 		model = glm::translate(model, glm::vec3(0.0, 7.0f, 0.0f));
@@ -540,11 +544,25 @@ void display() {
 		glUniform1i(glGetUniformLocation(geometryPassShader, "invertedNormals"), 1); 
 		renderCube();
 		// glUniformMatrix4fv(glGetUniformLocation(geometryPassShader, "xform"), 1, GL_FALSE, value_ptr(xform));
-		glUniformMatrix4fv(glGetUniformLocation(geometryPassShader, "model"), 1, GL_FALSE, value_ptr(fixBB));
 		glUniform1i(glGetUniformLocation(geometryPassShader, "invertedNormals"), 0); 
+		// Load and prepare mesh if not already loaded
+		for(int i = 1 ; i <= numObj; i++){
 
-		// Draw the mesh
-		mesh->draw();
+			if(meshList.size() < i) meshList.push_back( new Mesh("models/bunny2.obj") );
+
+			// Scale and center mesh using bounding box
+			pair<vec3, vec3> meshBB = meshList[i-1]->boundingBox();
+		
+			mat4 fixBB = scale(mat4(1.0f), vec3(1.0f / length(meshBB.second - meshBB.first)));
+			fixBB = glm::translate(fixBB, - (meshBB.first + meshBB.second) / 2.0f);
+    		fixBB = glm::translate(fixBB, vec3( (i-1) * 2.0f, 0.0f, (i-1) * 2.0f)); // Adjust spacing by changing `2.0f` if needed
+			glUniformMatrix4fv(glGetUniformLocation(geometryPassShader, "model"), 1, GL_FALSE, value_ptr(fixBB));
+
+			// Draw the mesh
+			meshList[i-1]->draw();
+
+		}
+		
 
 		// Unbind framebuffer kernelto switch back to the default framebuffer
 		glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -564,6 +582,9 @@ void display() {
 			glUniform3fv(glGetUniformLocation(ssaoPassShader, uniformName.c_str()), 1, &ssaoKernel[i][0]); 
 		}
 		glUniformMatrix4fv(glGetUniformLocation(ssaoPassShader, "projection"), 1, GL_FALSE, value_ptr(proj));
+		glUniform1f(glGetUniformLocation(ssaoPassShader, "m"), m);
+		glUniform1f(glGetUniformLocation(ssaoPassShader, "k"), k);
+		glUniform1i(glGetUniformLocation(ssaoPassShader, "n"), n);
 
 		glActiveTexture(GL_TEXTURE0);
 		glBindTexture(GL_TEXTURE_2D, gPosition);
@@ -586,7 +607,6 @@ void display() {
 		glUseProgram(blurShader);
 		glActiveTexture(GL_TEXTURE0);
 		glBindTexture(GL_TEXTURE_2D, ssaoColorBuffer);
-		glUniform1i(glGetUniformLocation(blurShader, "ssaoInput"), 0);
 		renderQuad();
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
 		assert(glGetError() == GL_NO_ERROR);
@@ -608,11 +628,7 @@ void display() {
         const float quadratic = 0.032f;
 		glUniform1f(glGetUniformLocation(LightingPassShader, "light.Linear"), linear); 
 		glUniform1f(glGetUniformLocation(LightingPassShader, "light.Quadratic"), quadratic);
-		glUniform1i(glGetUniformLocation(LightingPassShader, "gPosition"), 0); 
-		glUniform1i(glGetUniformLocation(LightingPassShader, "gNormal"), 1); 
-		glUniform1i(glGetUniformLocation(LightingPassShader, "gAlbedo"), 2);
-		glUniform1i(glGetUniformLocation(LightingPassShader, "ssao"), 3); 
-       
+	 
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, gPosition);
         glActiveTexture(GL_TEXTURE1);
@@ -641,6 +657,61 @@ void reshape(GLint width, GLint height) {
 	::width = width;
 	::height = height;
 	glViewport(0, 0, width, height);
+}
+
+void keyPressed(unsigned char key, int x, int y)
+{
+	switch(key)
+	{
+	case 'k':
+		activate = 'k';
+		// glutPostRedisplay();
+		break;
+	case 'm':
+		activate = 'm';
+		// glutPostRedisplay();
+		break;
+	case 'n':
+		activate = 'n';
+		break;
+	case 'r':
+		k = 1;
+		m = 1;
+		n = 64;
+		activate = '\0';
+		glutPostRedisplay();
+		break;
+	}
+}
+
+// Function to handle special key events (for arrow keys)
+void SpecialKeyPressed(int key, int x, int y) {	
+		
+	
+    switch (key) {
+        case GLUT_KEY_UP:
+			if(activate == 'k') k += 0.1;
+			else if(activate == 'm') m += 0.1;
+			else if(activate == 'n') { if(n < 128) n += 8; }
+			// activate = '\0';
+            break;
+        case GLUT_KEY_DOWN:
+			if(activate == 'k') k -= 0.1;
+			else if(activate == 'm') m -= 0.1;
+			else if(activate == 'n') { if(n >= 8) n -= 8; }
+
+			// activate = '\0';
+            break;
+		case GLUT_KEY_LEFT:
+			if(numObj < 10) numObj += 1;
+			break; 
+		case GLUT_KEY_RIGHT:
+			if(numObj > 1) numObj -= 1;
+			break;       
+    }
+
+	glutPostRedisplay();
+
 }
 
 void keyRelease(unsigned char key, int x, int y) {
@@ -717,4 +788,7 @@ void cleanup() {
 	if (vbuf) { glDeleteBuffers(1, &vbuf); vbuf = 0; }
 	vcount = 0;
 	if (mesh) { delete mesh; mesh = NULL; }
+	for (auto s = meshList.begin(); s != meshList.end(); ++s)
+		delete *s;
+	meshList.clear();
 }
