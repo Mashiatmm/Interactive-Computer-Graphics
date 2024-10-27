@@ -33,7 +33,7 @@ unsigned int quadVBO = 0;
 // lighting info
 // -------------
 glm::vec3 lightPos, lightColor;
-float k, m;
+float k, m, d;
 int n;
 char activate;
 
@@ -113,6 +113,7 @@ void initState() {
 	k = 1;
 	m = 1;
 	n = 64;
+	d = 0.5;
 	activate = '\0';
 	numObj = 2;
 	vao = 0;
@@ -509,6 +510,7 @@ void display() {
 		glUniformMatrix4fv(glGetUniformLocation(ssaoPassShader, "projection"), 1, GL_FALSE, value_ptr(proj));
 		glUniform1f(glGetUniformLocation(ssaoPassShader, "m"), m);
 		glUniform1f(glGetUniformLocation(ssaoPassShader, "k"), k);
+		glUniform1f(glGetUniformLocation(ssaoPassShader, "radius"), d);
 		glUniform1i(glGetUniformLocation(ssaoPassShader, "n"), n);
 
 		glActiveTexture(GL_TEXTURE0);
@@ -599,6 +601,9 @@ void keyPressed(unsigned char key, int x, int y)
 	case 'n':
 		activate = 'n';
 		break;
+	case 'd':
+		activate = 'd';
+		break;
 	case 'r':
 		k = 1;
 		m = 1;
@@ -617,12 +622,14 @@ void SpecialKeyPressed(int key, int x, int y) {
         case GLUT_KEY_UP:
 			if(activate == 'k') k += 0.1;
 			else if(activate == 'm') m += 0.1;
+			else if(activate == 'd') d += 0.1;
 			else if(activate == 'n') { if(n < 128) n += 8; }
 			// activate = '\0';
             break;
         case GLUT_KEY_DOWN:
 			if(activate == 'k') k -= 0.1;
 			else if(activate == 'm') m -= 0.1;
+			else if(activate == 'd') d -= 0.1;
 			else if(activate == 'n') { if(n >= 8) n -= 8; }
 
 			// activate = '\0';

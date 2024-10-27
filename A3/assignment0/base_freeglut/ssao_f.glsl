@@ -10,7 +10,7 @@ uniform int n;
 uniform vec3 samples[64];
 
 // int kernelSize = n;
-float radius = 0.5;
+uniform float radius;
 float bias = 0.025;
 uniform float m;
 uniform float k;
