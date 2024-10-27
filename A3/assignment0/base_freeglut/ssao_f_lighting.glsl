@@ -8,6 +8,8 @@ uniform sampler2D gNormal;
 uniform sampler2D gAlbedo;
 uniform sampler2D ssao;
 
+uniform int lighted;
+
 struct Light {
     vec3 Position;		
     vec3 Color;
@@ -41,7 +43,7 @@ void main()
     specular *= attenuation;
     lighting += diffuse + specular;
 
-    FragColor = vec4(vec3(AmbientOcclusion), 1.0);
-    // FragColor = vec4(lighting, 1.0);
+    if(lighted == 0) FragColor = vec4(vec3(AmbientOcclusion), 1.0);
+    else if(lighted == 1) FragColor = vec4(lighting, 1.0);
 
 }

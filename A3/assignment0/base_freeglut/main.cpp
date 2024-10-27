@@ -30,6 +30,7 @@ unsigned int noiseTexture;
 std::vector<glm::vec3> ssaoKernel;
 unsigned int quadVAO = 0;
 unsigned int quadVBO = 0;
+unsigned int lighting;
 // lighting info
 // -------------
 glm::vec3 lightPos, lightColor;
@@ -114,6 +115,7 @@ void initState() {
 	m = 1;
 	n = 64;
 	d = 0.5;
+	lighting = 0;
 	activate = '\0';
 	numObj = 2;
 	vao = 0;
@@ -361,7 +363,7 @@ void initSSAOBuffer()
 	glUniform1i(glGetUniformLocation(LightingPassShader, "gNormal"), 1); 
 	glUniform1i(glGetUniformLocation(LightingPassShader, "gAlbedo"), 2);
 	glUniform1i(glGetUniformLocation(LightingPassShader, "ssao"), 3); 
- 
+
 
 	glUseProgram(ssaoPassShader);
 	
@@ -555,7 +557,8 @@ void display() {
         const float quadratic = 0.032f;
 		glUniform1f(glGetUniformLocation(LightingPassShader, "light.Linear"), linear); 
 		glUniform1f(glGetUniformLocation(LightingPassShader, "light.Quadratic"), quadratic);
-	 
+	 	glUniform1i(glGetUniformLocation(LightingPassShader, "lighted"), lighting); 
+
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, gPosition);
         glActiveTexture(GL_TEXTURE1);
@@ -608,7 +611,12 @@ void keyPressed(unsigned char key, int x, int y)
 		k = 1;
 		m = 1;
 		n = 64;
+		d = 0.5;
 		activate = '\0';
+		glutPostRedisplay();
+		break;
+	case 'l':
+		lighting = 1 - lighting;
 		glutPostRedisplay();
 		break;
 	}
@@ -635,10 +643,10 @@ void SpecialKeyPressed(int key, int x, int y) {
 			// activate = '\0';
             break;
 		case GLUT_KEY_LEFT:
-			if(numObj < 10) numObj += 1;
+			if(numObj > 1) numObj -= 1;
 			break; 
 		case GLUT_KEY_RIGHT:
-			if(numObj > 1) numObj -= 1;
+			if(numObj < 10) numObj += 1;
 			break;       
     }
 
