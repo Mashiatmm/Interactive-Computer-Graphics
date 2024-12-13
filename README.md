@@ -2,6 +2,7 @@
 ![ezgif-7-6bcbe3cbff](https://github.com/user-attachments/assets/1bb6bec3-2d60-4ec2-b7f6-5525947bab6c)
 
 # A1: General Linear Camera
+Implementing Orthographic, Perspective and Pushbroom camera
 
 # A2: Splatting
 
